@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Currency Mask Example</title>
+	</head>
+
+	<body>
+			<label for="price">Price:</label>
+			<input id="price"  />
+	</body>
+
+	<script src="currency-mask-0.5.0-min.js" type="text/javascript" ></script>
+	<script type="text/javascript" >
+		var price = document.getElementById("price");
+		var price_mask = new Mask("$#,###", "number");
+		price_mask.attach(price);
+	</script>
+</html>
+
+
