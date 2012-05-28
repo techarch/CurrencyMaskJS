@@ -36,6 +36,7 @@ Mask.prototype.attach = function (o) {
     // PFM: Identify IE once and for all
     this.msie = navigator.userAgent.match(/MSIE/g);
     this.msie9 = navigator.userAgent.match(/MSIE 9/g);
+    this.webkit = navigator.userAgent.match(/WebKit/g);
 
     $addEvent(o, "onkeydown", "return " + this.ref + ".isAllowKeyPress(event, this);", true);
     $addEvent(o, "onkeyup", "return " + this.ref + ".getKeyPress(event, this);", true);
@@ -45,7 +46,7 @@ Mask.prototype.attach = function (o) {
 
     // PFM : changed the logic for IE9 as the blur event is not triggering a change 
     // (works in all browsers inc. IE8 but not IE9!!!)
-    if (this.msie9) {
+    if (this.msie9 || this.webkit) {
         // PFM: needs to rely on jQuery  
         // 1. Don't reformat the value!
         // 2. Eplicitly trigger the change event too!
@@ -61,7 +62,6 @@ Mask.prototype.attach = function (o) {
 Mask.prototype.isAllowKeyPress = function (e, o) {
     if (this.type != "string") return true;
     var xe = new qEvent(e);
-
     if (((xe.keyCode > 47) && (o.value.length >= this.mask.length)) && !xe.ctrlKey) return false;
     return true;
 }
@@ -77,7 +77,7 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
     var currentLength = o.value.length;
 
     //	var k = String.fromCharCode(xe.keyCode);
-    // console.debug(''+ e + ' ' + o + ' ' + _u + ' key:' + xe.keyCode + ' ' + String.fromCharCode(xe.keyCode));
+    //console.debug('e='+ e + ' o=' + o + ' -u=' + _u + ' key:' + xe.keyCode + ' decoded=' + String.fromCharCode(xe.keyCode));
 
     if ((xe.keyCode > 47) || (_u == true) || (xe.keyCode == 8 || xe.keyCode == 46)) {
         var v = o.value, d;
