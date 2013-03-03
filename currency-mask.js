@@ -3,7 +3,7 @@
 // Adapted from original work from Dan Switzer (dswitzer@pengoworks.com)
 // Original source http://www.pengoworks.com/workshop/js/mask/
 // Enhanced by Philippe Monnet (techarch@monnet-usa.com) in 2008-2011
-// Last revision: 2011-03-31
+// Last revision: 2013-02-27
 // Note: this library does not depend on any other library.
 //
 // Usage examples:
@@ -12,7 +12,7 @@
 //
 
 function _MaskAPI() {
-    this.version = "0.5";
+    this.version = "0.6";
     this.instances = 0;
     this.objects = {};
 }
@@ -34,8 +34,20 @@ function Mask(m, t) {
 // define the attach(oElement) function
 Mask.prototype.attach = function (o) {
     // PFM: Identify IE once and for all
-    this.msie = navigator.userAgent.match(/MSIE/g);
-    this.msie9 = navigator.userAgent.match(/MSIE 9/g);
+    var ua = navigator.userAgent;
+    this.msie = ua.match(/MSIE/g);
+    this.msie9AndAbove = false;
+
+    if (this.msie) {
+        var ieVersion = 1;
+        var re = new RegExp("MSIE ([0-9]{1,}[\.0-9]{0,})");
+        if (re.exec(ua) != null) {
+            ieVersion = parseFloat(RegExp.$1);
+        }
+        this.msie9AndAbove = (ieVersion >= 9);
+    }
+
+    this.webkit = ua.match(/WebKit/g);
 
     $addEvent(o, "onkeydown", "return " + this.ref + ".isAllowKeyPress(event, this);", true);
     $addEvent(o, "onkeyup", "return " + this.ref + ".getKeyPress(event, this);", true);
@@ -45,7 +57,7 @@ Mask.prototype.attach = function (o) {
 
     // PFM : changed the logic for IE9 as the blur event is not triggering a change 
     // (works in all browsers inc. IE8 but not IE9!!!)
-    if (this.msie9) {
+    if (this.msie9AndAbove || this.webkit) {
         // PFM: needs to rely on jQuery  
         // 1. Don't reformat the value!
         // 2. Eplicitly trigger the change event too!
@@ -61,7 +73,6 @@ Mask.prototype.attach = function (o) {
 Mask.prototype.isAllowKeyPress = function (e, o) {
     if (this.type != "string") return true;
     var xe = new qEvent(e);
-
     if (((xe.keyCode > 47) && (o.value.length >= this.mask.length)) && !xe.ctrlKey) return false;
     return true;
 }
@@ -77,7 +88,7 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
     var currentLength = o.value.length;
 
     //	var k = String.fromCharCode(xe.keyCode);
-    // console.debug(''+ e + ' ' + o + ' ' + _u + ' key:' + xe.keyCode + ' ' + String.fromCharCode(xe.keyCode));
+    //console.debug('e='+ e + ' o=' + o + ' -u=' + _u + ' key:' + xe.keyCode + ' decoded=' + String.fromCharCode(xe.keyCode));
 
     if ((xe.keyCode > 47) || (_u == true) || (xe.keyCode == 8 || xe.keyCode == 46)) {
         var v = o.value, d;
@@ -496,7 +507,8 @@ Mask.prototype.updateFormattedValue = function (value) {
 function qEvent(e) {
     // PFM: Added explicit check for the browser agent
     // since IE 8 now implements window.Event
-    if (navigator.userAgent.match(/MSIE/g)) {
+    var ua = navigator.userAgent;
+    if (ua.match(/MSIE/g)) {
         // routine for Internet Explorer DOM browsers
         e = window.event;
         this.keyCode = parseInt(e.keyCode, 10);

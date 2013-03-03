@@ -1,0 +1,16 @@
+CurrencyMaskJS
+============
+
+ Adapted from original work from Dan Switzer (dswitzer@pengoworks.com)
+ Original source http:www.pengoworks.com/workshop/js/mask/
+ Enhanced by Philippe Monnet (techarch@monnet-usa.com) in 2008-2011
+ Last revision: 2011-03-31
+ 
+ Note: this library does not depend on any other library.
+
+ Usage examples:
+		var price = document.getElementById("price");
+		var price_mask = new Mask("$#,###", "number");
+		price_mask.attach(price);
+
+		
