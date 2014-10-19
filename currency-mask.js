@@ -2,9 +2,9 @@
 //
 // Adapted from original work from Dan Switzer (dswitzer@pengoworks.com)
 // Original source http://www.pengoworks.com/workshop/js/mask/
-// Enhanced by Philippe Monnet (techarch@monnet-usa.com) in 2008-2011
-// Last revision: 2013-02-27
-// Note: this library does not depend on any other library.
+// Enhanced by Philippe Monnet (techarch@monnet-usa.com) in 2008-2014
+// Last revision: 2014-10-19 (bug fixes)
+// Note: this library depends on the jQuery library.
 //
 // Usage examples:
 //      var housePrice_mask = new Mask("$#,###", "number");
@@ -12,22 +12,24 @@
 //
 
 function _MaskAPI() {
-    this.version = "0.6";
+    this.version = "0.8";
     this.instances = 0;
     this.objects = {};
 }
 MaskAPI = new _MaskAPI();
 
-function Mask(m, t) {
+function Mask(m, t, r) {
     this.mask = m;
     this.type = (typeof t == "string") ? t : "string";
     this.error = [];
     this.errorCodes = [];
     this.value = "";
+    this.logLevel = "info";
     this.strippedValue = "";
     this.allowPartial = false;
     this.id = MaskAPI.instances++;
     this.ref = "MaskAPI.objects['" + this.id + "']";
+    this.round = (typeof(r) != 'undefined') ? r : true; // PFM - triggers rounding in numbers
     MaskAPI.objects[this.id] = this;
 }
 
@@ -35,7 +37,7 @@ function Mask(m, t) {
 Mask.prototype.attach = function (o) {
     // PFM: Identify IE once and for all
     var ua = navigator.userAgent;
-    this.msie = ua.match(/MSIE/g);
+    this.msie = ua.match(/MSIE/g) || ua.match(/Trident/);
     this.msie9AndAbove = false;
 
     if (this.msie) {
@@ -44,7 +46,7 @@ Mask.prototype.attach = function (o) {
         if (re.exec(ua) != null) {
             ieVersion = parseFloat(RegExp.$1);
         }
-        this.msie9AndAbove = (ieVersion >= 9);
+        this.msie9AndAbove = (ieVersion >= 9) || ua.match(/Trident/);
     }
 
     this.webkit = ua.match(/WebKit/g);
@@ -63,11 +65,14 @@ Mask.prototype.attach = function (o) {
         // 2. Eplicitly trigger the change event too!
         $(o).blur(function () {
             $(this).change();
+            m.log('Mask ' + m + ' for input: #' + this.id + ' triggered change event', 'info');
             return true;
         });
     } else {
         $addEvent(o, "onblur", "this.value = " + this.ref + ".format(this.value);" + this.ref + ".target.value=this.value;return this.value;", true);
     }
+
+    this.log('Mask ' + this.mask + ' now attached to input: #' + o.id, 'debug');
 }
 
 Mask.prototype.isAllowKeyPress = function (e, o) {
@@ -88,16 +93,22 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
     var currentLength = o.value.length;
 
     //	var k = String.fromCharCode(xe.keyCode);
-    //console.debug('e='+ e + ' o=' + o + ' -u=' + _u + ' key:' + xe.keyCode + ' decoded=' + String.fromCharCode(xe.keyCode));
-
     if ((xe.keyCode > 47) || (_u == true) || (xe.keyCode == 8 || xe.keyCode == 46)) {
         var v = o.value, d;
-        if (xe.keyCode == 8 || xe.keyCode == 46) d = true;
-        else d = false
+        // Find out if it is a decimal
+        d = (xe.keyCode == 8 || xe.keyCode == 46 || xe.keyCode == 190) ? true : false;
 
-        if (this.type == "number") this.value = this.setNumber(v, d);
-        else if (this.type == "date") this.value = this.setDateKeyPress(v, d);
-        else this.value = this.setGeneric(v, d);
+        if (this.type == "number") {
+            this.log('Mask for ' + o.id + ' type:' + this.type + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode)
+                        + ' setNumber(' + v + ',' + d + ')', 'debug');
+            this.value = this.setNumber(v, d);
+        }
+        else if (this.type == "date") {
+            this.value = this.setDateKeyPress(v, d);
+        }
+        else {
+            this.value = this.setGeneric(v, d);
+        }
 
         o.value = this.value;
 
@@ -106,6 +117,10 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
         // the new character to the right
         var newCaretPosition = (o.value.length > currentLength) ? caretPosition + 1 : caretPosition;
         this.setCaretPosition(o, newCaretPosition);
+        this.log('Mask for ' + o.id + ' type:' + this.type + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode)
+                    + ' new value:' + o.value, 'debug');
+    } else {
+        this.log('Mask for ' + o.id + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode) + ' ignore', 'debug');
     }
     /* */
 
@@ -116,11 +131,27 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
 
 Mask.prototype.getCaretPosition = function (ctrl) {
     var caretStart = 0;
+    var aSelection = null;
+    var aRange = null;
 
     // IE Support
     if (this.msie) {
-        var aRange = document.selection.createRange();
-        var selLength = document.selection.createRange().text.length;
+        if (typeof (document.selection) != 'undefined') {
+            aSelection = document.selection;
+            aRange = aSelection.createRange();
+        } else {
+            aSelection = window.getSelection();
+            if (aSelection != null) {
+                aRange = (aSelection.rangeCount > 0)
+                            ? aSelection.getRangeAt(0)
+                            : null;
+                if (aRange == null) {
+                    return 0;
+                }
+            }
+        }
+
+        var selLength = aRange.text.length;
         aRange.moveStart('character', -ctrl.value.length);
         caretStart = aRange.text.length - selLength;
         caretEnd = caretStart + aRange.text.length;
@@ -133,10 +164,29 @@ Mask.prototype.getCaretPosition = function (ctrl) {
 }
 
 Mask.prototype.setCaretPosition = function (ctrl, iCaretPos) {
+    var aSelection = null;
+    var aRange = null;
+
     if (this.msie) {
         // IE Support
         // Create empty selection range
-        var aRange = document.selection.createRange();
+        if (typeof (document.selection) != 'undefined') {
+            aSelection = document.selection;
+            aRange = aSelection.createRange();
+        } else {
+            aSelection = window.getSelection();
+            if (aSelection != null) {
+                aRange = (aSelection.rangeCount > 0)
+                            ? aSelection.getRangeAt(0)
+                            : null;
+                if (aRange != null) {
+                    aSelection.removeAllRanges();
+                    aSelection.addRange(iCaretPos);
+                }
+                return;
+            }
+            return;
+        }
 
         // Move selection start and end to 0 position
         aRange.moveStart('character', -ctrl.value.length);
@@ -154,7 +204,7 @@ Mask.prototype.setCaretPosition = function (ctrl, iCaretPos) {
     }
 }
 
-Mask.prototype.format = function (s) {
+Mask.prototype.format = function (s, _r) {
     if (this.type == "number") this.value = this.setNumber(s);
     else if (this.type == "date") this.value = this.setDate(s);
     else this.value = this.setGeneric(s);
@@ -286,9 +336,24 @@ Mask.prototype.setNumber = function (_v, _d) {
         // of decimal places to show
         var md = dm.lastIndexOf("0") + 1;
         // if the number of decimal places is greater than the mask, then round off
-        if (vd.length > dm.length) vd = String(Math.round(Number(vd.substring(0, dm.length + 1)) / 10));
-        // otherwise, pad the string w/the required zeros
-        else while (vd.length < md) vd += "0";
+        if (vd.length > dm.length) {
+            // PFM - If rounding is on then round otherwise cut off
+            if (this.round) {
+                // PFM - Prefix with 1 to ensure the rounding is correct if the first decimals are zeroes
+                var decs = '1' + vd.substring(0, dm.length + 1);
+                var decn = Number(decs);
+                var decr = Math.round(Number(decs) / 10); // compensate for the leading 1
+                var decrs = String(decr);
+                vd = decrs.substring(1); // lop off the leading 1 as we no longer need it
+            } else {
+                // PFM - lop off the last entered digit
+                vd = vd.substring(0, dm.length);
+            }
+        }
+        else {
+            // otherwise, pad the string w/the required zeros
+            while (vd.length < md) vd += "0";
+        }
     }
 
     /*
@@ -306,6 +371,8 @@ Mask.prototype.setNumber = function (_v, _d) {
         while (vi.length < mv) vi = "0" + vi;
     }
 
+    // PFM - Reupdated the stripped value
+    this.strippedValue = vi + "." + vd;
 
     /*
     check to see if we need commas in the thousands place holder
@@ -327,7 +394,8 @@ Mask.prototype.setNumber = function (_v, _d) {
     /*
     combine the new value together
     */
-    if ((vd.length > 0 && !this.allowPartial) || ((dm.length > 0) && this.allowPartial && (v.indexOf(".") > -1) && (_vd.length >= vd.length))) {
+    if ((vd.length > 0 && !this.allowPartial) ||
+        ((dm.length > 0) && this.allowPartial && (v.indexOf(".") > -1) && (_vd.length >= vd.length))) {
         v = vi + "." + vd;
     } else if ((dm.length > 0) && this.allowPartial && (v.indexOf(".") > -1) && (_vd.length < vd.length)) {
         v = vi + "." + _vd;
@@ -502,6 +570,37 @@ Mask.prototype.updateFormattedValue = function (value) {
     var formatted_value = this.format(value);
     this.target.value = formatted_value;
     return formatted_value;
+}
+
+Mask.prototype.log = function (message, level) {
+    if (this.webkit) {
+        switch (level) {
+            case "debug":
+                if (this.logLevel === 'debug')
+                    try { console.debug(message); } catch (ex) { var a = 1; }
+                break;
+            case "error":
+                try { console.error(message); } catch (ex) { var a = 1; }
+                break;
+            case "info":
+                if (this.logLevel === 'debug' || this.logLevel === 'info')
+                    try { console.info(message); } catch (ex) { var a = 1; }
+                break;
+            default:
+                try { console.debug(message); } catch (ex) { var a = 1; }
+                break;
+        }
+        return message;
+    }
+
+    if (this.msie) {
+        if (level === this.logLevel ||
+            (this.logLevel === 'debug') ||
+            (this.logLevel === 'info' && (level === 'info' || level === 'error')))
+            try { console.log(message); } catch (ex) { var a = 1; }
+    }
+
+    return message;
 }
 
 function qEvent(e) {
