@@ -3,7 +3,7 @@
 // Adapted from original work from Dan Switzer (dswitzer@pengoworks.com)
 // Original source http://www.pengoworks.com/workshop/js/mask/
 // Enhanced by Philippe Monnet (techarch@monnet-usa.com) in 2008-2014
-// Last revision: 2014-10-19 (bug fixes)
+// Last revision: v0.9 2014-10-30 01:22PM (bug fixes)
 // Note: this library depends on the jQuery library.
 //
 // Usage examples:
@@ -12,10 +12,51 @@
 //
 
 function _MaskAPI() {
-    this.version = "0.8";
+    this.version = "0.9";
     this.instances = 0;
     this.objects = {};
+
+    this.GetMaskForInputWithId = function (id) {
+        var mask = null;
+        var keys = Object.keys(this.objects);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var m = this.objects[key];
+            if (typeof (m) != 'undefined' &&
+                m.target != null &&
+                m.target.id === id) {
+                mask = m;
+                break;
+            }
+        }
+        return mask;
+    }
+
+    this.RefreshAllInputs = function () {
+        var keys = Object.keys(this.objects);
+        var keysCount = keys.length;
+
+        for (var i = 0; i < keysCount; i++) {
+            var key = keys[i];
+            var m = this.objects[key];
+            if (typeof (m) != 'undefined' &&
+                m.target != null) {
+                m.target.value = m.format(m.target.value);
+            }
+        }
+        return keysCount;
+    }
+
+    this.RefreshInputWithId = function (id) {
+        var m = this.GetMaskForInputWithId(id);
+        if (m == null || m.target == null) {
+            return;
+        }
+
+        m.target.value = m.format(m.target.value);
+    }
 }
+
 MaskAPI = new _MaskAPI();
 
 function Mask(m, t, r) {
@@ -24,12 +65,15 @@ function Mask(m, t, r) {
     this.error = [];
     this.errorCodes = [];
     this.value = "";
-    this.logLevel = "info";
+    this.logLevel = "debug";
     this.strippedValue = "";
     this.allowPartial = false;
+    this.numericMaskDisplayFlags = {};
+    this.target = null;
     this.id = MaskAPI.instances++;
     this.ref = "MaskAPI.objects['" + this.id + "']";
-    this.round = (typeof(r) != 'undefined') ? r : true; // PFM - triggers rounding in numbers
+    this.round = (typeof (r) != 'undefined') ? r : true; // PFM - triggers rounding in numbers
+
     MaskAPI.objects[this.id] = this;
 }
 
@@ -38,6 +82,7 @@ Mask.prototype.attach = function (o) {
     // PFM: Identify IE once and for all
     var ua = navigator.userAgent;
     this.msie = ua.match(/MSIE/g) || ua.match(/Trident/);
+    this.msie9 = false;
     this.msie9AndAbove = false;
 
     if (this.msie) {
@@ -46,10 +91,12 @@ Mask.prototype.attach = function (o) {
         if (re.exec(ua) != null) {
             ieVersion = parseFloat(RegExp.$1);
         }
+        this.msie9 = (ieVersion == 9);
         this.msie9AndAbove = (ieVersion >= 9) || ua.match(/Trident/);
     }
 
-    this.webkit = ua.match(/WebKit/g);
+    this.webkit  = ua.match(/WebKit/g);
+    this.mozilla = ua.match(/Mozilla/g);
 
     $addEvent(o, "onkeydown", "return " + this.ref + ".isAllowKeyPress(event, this);", true);
     $addEvent(o, "onkeyup", "return " + this.ref + ".getKeyPress(event, this);", true);
@@ -59,7 +106,7 @@ Mask.prototype.attach = function (o) {
 
     // PFM : changed the logic for IE9 as the blur event is not triggering a change 
     // (works in all browsers inc. IE8 but not IE9!!!)
-    if (this.msie9AndAbove || this.webkit) {
+    if ((this.msie && !this.msie9) || this.webkit) { //use to include this.msie9AndAbove
         // PFM: needs to rely on jQuery  
         // 1. Don't reformat the value!
         // 2. Eplicitly trigger the change event too!
@@ -69,8 +116,14 @@ Mask.prototype.attach = function (o) {
             return true;
         });
     } else {
-        $addEvent(o, "onblur", "this.value = " + this.ref + ".format(this.value);" + this.ref + ".target.value=this.value;return this.value;", true);
+        if (this.mozilla) {
+            $addEvent(o, "onblur", "this.value = " + this.ref + ".format(this.value);" + this.ref + ".target.value=this.value;$('#'+this.id).change();return this.value;", true);
+        }
     }
+
+    // Apply the mask immediately
+    var maskedValue = this.format(o.value);
+    o.value = maskedValue;
 
     this.log('Mask ' + this.mask + ' now attached to input: #' + o.id, 'debug');
 }
@@ -93,10 +146,11 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
     var currentLength = o.value.length;
 
     //	var k = String.fromCharCode(xe.keyCode);
-    if ((xe.keyCode > 47) || (_u == true) || (xe.keyCode == 8 || xe.keyCode == 46)) {
+    if ((xe.keyCode > 47) || (_u == true) || (xe.keyCode == 8 || xe.keyCode == 46 || xe.keyCode == 110)) {
         var v = o.value, d;
-        // Find out if it is a decimal
-        d = (xe.keyCode == 8 || xe.keyCode == 46 || xe.keyCode == 190) ? true : false;
+        // Find out if it is a decimal point character
+        // Used to include: xe.keyCode == 8 || xe.keyCode == 46
+        d = (xe.keyCode == 190 || xe.keyCode == 110) ? true : false;
 
         if (this.type == "number") {
             this.log('Mask for ' + o.id + ' type:' + this.type + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode)
@@ -115,19 +169,20 @@ Mask.prototype.getKeyPress = function (e, o, _u) {
         // PFM: Figure out and set the new position of the caret
         // since it could be offset by 1 if the masking shifted 
         // the new character to the right
-        var newCaretPosition = (o.value.length > currentLength) ? caretPosition + 1 : caretPosition;
+        var newCaretPosition = (o.value.length > currentLength)
+                                    ? (currentLength > 1 ? caretPosition + 1 : o.value.length)
+                                    : caretPosition;
         this.setCaretPosition(o, newCaretPosition);
         this.log('Mask for ' + o.id + ' type:' + this.type + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode)
-                    + ' new value:' + o.value, 'debug');
+                    + ' new value:' + o.value
+                    + ' oc' + caretPosition + ' nc:' + newCaretPosition, 'debug');
     } else {
         this.log('Mask for ' + o.id + ' _u:' + _u + ' key:' + xe.keyCode + ' decoded:' + String.fromCharCode(xe.keyCode) + ' ignore', 'debug');
     }
-    /* */
 
     this.allowPartial = false;
     return true;
 }
-
 
 Mask.prototype.getCaretPosition = function (ctrl) {
     var caretStart = 0;
@@ -156,7 +211,7 @@ Mask.prototype.getCaretPosition = function (ctrl) {
         caretStart = aRange.text.length - selLength;
         caretEnd = caretStart + aRange.text.length;
     }
-    // Firefox support
+        // Firefox support
     else if (ctrl.selectionStart || ctrl.selectionStart == '0')
         caretStart = ctrl.selectionStart;
 
@@ -197,7 +252,7 @@ Mask.prototype.setCaretPosition = function (ctrl, iCaretPos) {
         aRange.moveStart('character', iCaretPos);
         aRange.select();
     }
-    // Firefox support
+        // Firefox support
     else if (ctrl.selectionStart || ctrl.selectionStart == '0') {
         ctrl.selectionStart = iCaretPos;
         ctrl.selectionEnd = iCaretPos;
@@ -243,7 +298,7 @@ Mask.prototype.setGeneric = function (_v, _d) {
     var hasOneValidChar = false;
     // if the regex fails, return an error
     if (!this.allowPartial && !(new RegExp(rt.join(""))).test(v)) return this.throwError(1, "The value \"" + _v + "\" must be in the format " + this.mask + ".", _v);
-    // loop through the mask definition, and build the formatted string
+        // loop through the mask definition, and build the formatted string
     else if ((this.allowPartial && (v.length > 0)) || !this.allowPartial) {
         for (i = 0; i < a.length; i++) {
             if (a[i].mask) {
@@ -267,11 +322,17 @@ Mask.prototype.setGeneric = function (_v, _d) {
     return nv;
 }
 
-Mask.prototype.setNumber = function (_v, _d) {
-    var v = String(_v).replace(/[^\d.-]*/gi, ""), m = this.mask;
+Mask.prototype.normalizeNumberDecimal = function (v) {
+    // make sure there's only one decimal point
+    v = v.replace(/\./, "d").replace(/\./g, "").replace(/d/, ".");
+    return v;
+}
+
+Mask.prototype.normalizeNumberSign = function (_v) {
+    var v = String(_v).replace(/[^\d.-]*/gi, "");
 
     // PFM - If the mask does not include a + or a - then reject the key pressed
-    if ((v == "+" || v == "-") && m.indexOf(v) == -1)
+    if ((v == "+" || v == "-") && this.mask.indexOf(v) == -1)
         return "";
 
     // PFM - If data has already been entered then reject any sign indicator (as it should have been typed first!)
@@ -284,52 +345,67 @@ Mask.prototype.setNumber = function (_v, _d) {
     v = v.replace(/\+/, "d").replace(/\+/g, "").replace(/d/, "+");
     v = v.replace(/\-/, "d").replace(/\-/g, "").replace(/d/, "-");
 
-    // make sure there's only one decimal point
-    v = v.replace(/\./, "d").replace(/\./g, "").replace(/d/, ".");
+    return v;
+}
 
+Mask.prototype.normalizeNumberValue = function (_v, _isDecimalCharacter, v) {
     // check to see if an invalid mask operation has been entered
-    if (!/^[\$]?((\$?[\+-]?([0#]{1,3},)?[0#]*(\.[0#]*)?)|([\+-]?\([\+-]?([0#]{1,3},)?[0#]*(\.[0#]*)?\)))$/.test(m))
+    if (!/^[\$]?((\$?[\+-]?([0#]{1,3},)?[0#]*(\.[0#]*)?)|([\+-]?\([\+-]?([0#]{1,3},)?[0#]*(\.[0#]*)?\)))$/.test(this.mask))
         return this.throwError(1, "An invalid mask was specified for the \nMask constructor.", _v);
 
-    if ((_d == true) && (v.length == this.strippedValue.length)) v = v.substring(0, v.length - 1);
+    if ((_isDecimalCharacter == true) &&
+        (v.length == this.strippedValue.length)) {
+        v = v.substring(0, v.length - 1);
+    }
 
-    if (this.allowPartial && (v.replace(/[^0-9]/, "").length == 0)) return v;
+    if (this.allowPartial &&
+        (v.replace(/[^0-9]/, "").length == 0))
+        return v;
+
+    //
     this.strippedValue = v;
 
-    if (v.length == 0) v = NaN;
-    var vn = Number(v);
-    if (isNaN(vn)) return this.throwError(2, "The value entered was not a number.", _v);
-
-    // if no mask, stop processing
-    if (m.length == 0) return v;
-
-    // get the value before the decimal point
-    var vi = String(Math.abs((v.indexOf(".") > -1) ? v.split(".")[0] : v));
-    // get the value after the decimal point
-    var vd = (v.indexOf(".") > -1) ? v.split(".")[1] : "";
-    var _vd = vd;
+    var vn = (v.length == 0) ? NaN : Number(v);
+    if (isNaN(vn))
+        return this.throwError(2, "The value entered was not a number.", _v);
 
     var isNegative = (vn != 0 && Math.abs(vn) * -1 == vn);
 
+    // if no mask, stop processing
+    if (this.mask.length == 0)
+        return v;
+
+    var m = this.mask;
+
     // check for masking operations
-    var show = {
-        "$": /^[\$]/.test(m),
-        "(": (isNegative && (m.indexOf("(") > -1)),
-        "+": ((m.indexOf("+") != -1) && !isNegative)
-    }
-    show["-"] = (isNegative && (!show["("] || (m.indexOf("-") != -1)));
+    this.numericMaskDisplayFlags["$"] = /^[\$]/.test(m);
+    this.numericMaskDisplayFlags["("] = (isNegative && (m.indexOf("(") > -1));
+    this.numericMaskDisplayFlags["+"] = ((m.indexOf("+") != -1) &&
+                                        !isNegative);
+    this.numericMaskDisplayFlags["-"] = (isNegative &&
+                                        (!this.numericMaskDisplayFlags["("] || (m.indexOf("-") != -1)));
 
+    return v;
+}
 
+Mask.prototype.padNumericDecimalPart = function (v) {
     // replace all non-place holders from the mask
-    m = m.replace(/[^#0.,]*/gi, "");
+    var m = this.mask.replace(/[^#0.,]*/gi, "");
 
-    /*
-    make sure there are the correct number of decimal places
-    */
+    var hasDecimal = v.indexOf(".") > -1;
+
+    // get the value after the decimal point
+    var vd = hasDecimal
+                ? v.split(".")[1]
+                : "";
+    var _vd = vd;
+
     // get number of digits after decimal point in mask
-    var dm = (m.indexOf(".") > -1) ? m.split(".")[1] : "";
+    var dm = hasDecimal
+                ? m.split(".")[1]
+                : "";
+
     if (dm.length == 0) {
-        vi = String(Math.round(Number(vi)));
         vd = "";
     } else {
         // find the last zero, which indicates the minimum number
@@ -356,28 +432,81 @@ Mask.prototype.setNumber = function (_v, _d) {
         }
     }
 
-    /*
-    pad the int with any necessary zeros
-    */
+    var vd2 = '';
+
+    if ((vd.length > 0 && !this.allowPartial) ||
+        ((dm.length > 0) &&
+         this.allowPartial &&
+        hasDecimal &&
+        (_vd.length >= vd.length))) {
+        vd2 = vd;
+    } else if ((dm.length > 0) &&
+               this.allowPartial &&
+           hasDecimal &&
+           (_vd.length < vd.length)) {
+        vd2 = _vd;
+    } else {
+        vd2 = '';
+    }
+
+    this.log('vd=' + vd + ' l=' + vd.length + ' _vd=' + _vd + ' l=' + _vd.length + ' aP=' + this.allowPartial + ' hD=' + hasDecimal + ' vd2=' + vd2, 'debug');
+
+    return vd2;
+}
+
+Mask.prototype.padNumericIntegerPart = function (v) {
+    // replace all non-place holders from the mask
+    var m = this.mask.replace(/[^#0.,]*/gi, "");
+
+    // get the value before the decimal point
+    var hasDecimal = v.indexOf(".") > -1;
+    var vi = hasDecimal
+                ? v.split(".")[0]
+                : v;
+
+    var ni = Math.abs(vi);
+    if (!hasDecimal) {
+        ni = Math.round(ni);
+    }
+
+    vi = String(ni);
+
+    // pad
     // get number of digits before decimal point in mask
-    var im = (m.indexOf(".") > -1) ? m.split(".")[0] : m;
+    var im = (m.indexOf(".") > -1)
+                ? m.split(".")[0]
+                : m;
     im = im.replace(/[^0#]+/gi, "");
+
     // find the first zero, which indicates the minimum length
     // that the value must be padded w/zeros
     var mv = im.indexOf("0") + 1;
+
     // if there is a zero found, make sure it's padded
     if (mv > 0) {
         mv = im.length - mv + 1;
         while (vi.length < mv) vi = "0" + vi;
     }
 
-    // PFM - Reupdated the stripped value
-    this.strippedValue = vi + "." + vd;
+    return vi;
+}
 
-    /*
-    check to see if we need commas in the thousands place holder
-    */
-    if (/[#0]+,[#0]{3}/.test(m)) {
+Mask.prototype.applyNumericDisplayFlags = function (v) {
+    if (this.numericMaskDisplayFlags["$"]) v = this.mask.replace(/(^[\$])(.+)/gi, "$") + v;
+    if (this.numericMaskDisplayFlags["+"]) v = "+" + v;
+    if (this.numericMaskDisplayFlags["-"]) v = "-" + v;
+    if (this.numericMaskDisplayFlags["("]) v = "(" + v + ")";
+    return v;
+}
+
+Mask.prototype.applyNumericThousandsSeparators = function (vi) {
+    // replace all non-place holders from the mask
+    var m = this.mask.replace(/[^#0.,]*/gi, "");
+
+    if (!/[#0]+,[#0]{3}/.test(m))
+        return vi;
+
+    try {
         // add the commas as the place holder
         var x = [], i = 0, n = Number(vi);
         while (n > 999) {
@@ -389,24 +518,48 @@ Mask.prototype.setNumber = function (_v, _d) {
         x[i] = String(n % 1000);
         vi = x.reverse().join(",");
     }
-
-
-    /*
-    combine the new value together
-    */
-    if ((vd.length > 0 && !this.allowPartial) ||
-        ((dm.length > 0) && this.allowPartial && (v.indexOf(".") > -1) && (_vd.length >= vd.length))) {
-        v = vi + "." + vd;
-    } else if ((dm.length > 0) && this.allowPartial && (v.indexOf(".") > -1) && (_vd.length < vd.length)) {
-        v = vi + "." + _vd;
-    } else {
-        v = vi;
+    catch (ex) {
+        this.log('applyThousandsSeparators error' + ex);
     }
 
-    if (show["$"]) v = this.mask.replace(/(^[\$])(.+)/gi, "$") + v;
-    if (show["+"]) v = "+" + v;
-    if (show["-"]) v = "-" + v;
-    if (show["("]) v = "(" + v + ")";
+    return vi;
+}
+
+Mask.prototype.setNumber = function (_v, _isDecimalCharacter) {
+    var v = this.normalizeNumberSign(_v);
+    if (v.length == 0)
+        return v;
+
+    v = this.normalizeNumberDecimal(v);
+    var m = this.mask;
+
+    v = this.normalizeNumberValue(_v, _isDecimalCharacter, v);
+    if (v.length == 0 && !_isDecimalCharacter)
+        return v;
+
+    this.strippedValue = v;
+
+    // pad the int with any necessary zeros
+    var vi = this.padNumericIntegerPart(v);
+
+    // pad the decimal part
+    var vd = this.padNumericDecimalPart(v);
+
+    // PFM - Reupdated the stripped value
+    this.strippedValue = vi;
+    if (vd.length > 0)
+        this.strippedValue += "." + vd;
+
+    // check to see if we need commas in the thousands place holder
+    vi = this.applyNumericThousandsSeparators(vi);
+
+    // combine the new value together
+    v = ((vd.length > 0) || _isDecimalCharacter)
+            ? vi + "." + vd
+            : vi;
+
+    // if needed the apply the currency and sign indicators
+    v = this.applyNumericDisplayFlags(v);
     return v;
 }
 
@@ -755,4 +908,13 @@ function $addEvent(o, _e, c, _b) {
     x = x.substring(x.indexOf("{") + 1, x.lastIndexOf("}"));
     x = ((b) ? (x + c) : (c + x)) + "\n";
     return o[e] = (!!window.Event) ? new Function("event", x) : new Function(x);
+}
+
+// Define the keys function on Object if the current browser does not yet implement it (sigh!)
+if (!Object.keys) Object.keys = function (o) {
+    if (o !== Object(o))
+        throw new TypeError('Object.keys called on non-object');
+    var ret = [], p;
+    for (p in o) if (Object.prototype.hasOwnProperty.call(o, p)) ret.push(p);
+    return ret;
 }
